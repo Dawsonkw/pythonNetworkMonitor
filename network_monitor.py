@@ -3,11 +3,19 @@ import scapy.all
 from scapy.all import ARP, Ether, srp
 import time
 import threading
+import signal
+import sys
 
 
 # 
 # Functioms for network scanning and monitoring
 # 
+
+def signal_handler(signal, frame):
+    stop_event.set()
+    print("\nMonitoring and scanning stopped.")
+    sys.exit(0)
+
 # Network statistics
 def get_network_stats():
     net_io = psutil.net_io_counters()
@@ -39,18 +47,28 @@ def arp_scan(network):
 
 def monitor_network(interface, stopEvent):
     while not stopEvent.is_set():
-        stats = get_network_stats()
-        print(f"Bytes sent: {stats['bytes_sent']}, Bytes received: {stats['bytes_recv']}")
-        print(f"Packets sent: {stats['packets_sent']}, Packets received: {stats['packets_recv']}")
-        time.sleep(5)
+        try:
+            stats = get_network_stats()
+            print(f"Bytes sent: {stats['bytes_sent']}, Bytes received: {stats['bytes_recv']}")
+            print(f"Packets sent: {stats['packets_sent']}, Packets received: {stats['packets_recv']}")
+            time.sleep(5)
+        except KeyboardInterrupt:
+            stop_event.set()
+            print("\nMonitoring and scanning stopped.")
+            break
 
 def scan_network(network, stopEvent):
     while not stopEvent.is_set():
-        devices = arp_scan(network)
-        print("Devices on network:")
-        for device in devices:
-            print(f"IP: {device['ip']}, MAC: {device['mac']}")
-        time.sleep(60)
+        try:
+            devices = arp_scan(network)
+            print("Devices on network:")
+            for device in devices:
+                print(f"IP: {device['ip']}, MAC: {device['mac']}")
+            time.sleep(60)
+        except KeyboardInterrupt:
+            stop_event.set()
+            print("\nMonitoring and scanning stopped.")
+            break
 
 
 if __name__ == "__main__":
@@ -58,6 +76,10 @@ if __name__ == "__main__":
     network = "192.168.1.0/24"
     
     stop_event = threading.Event()
+    
+    #Register signal handler for KeyboardInterrupt
+    signal.signal(signal.SIGINT, signal_handler)
+    # Start monitoring and scanning threads
     monitor_thread = threading.Thread(target=monitor_network, args=(interface, stop_event))
     scan_thread = threading.Thread(target=scan_network, args=(network, stop_event))
     
