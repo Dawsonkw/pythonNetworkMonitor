@@ -1,4 +1,5 @@
 import psutil
+import scapy.all 
 from scapy.all import ARP, Ether, srp
 import time
 import threading
@@ -18,6 +19,8 @@ def get_network_stats():
     }
 
 # ARP scan function
+
+# 
 
 def arp_scan(network):
     arp = ARP(pdst=network)
@@ -50,28 +53,37 @@ def scan_network(network, stopEvent):
         time.sleep(60)
 
 
+if __name__ == "__main__":
+    interface = "eth0"
+    network = "192.168.1.0/24"
+    
+    stop_event = threading.Event()
+    monitor_thread = threading.Thread(target=monitor_network, args=(interface, stop_event))
+    scan_thread = threading.Thread(target=scan_network, args=(network, stop_event))
+    
+    while True:
+        command = input("Enter 'start' to start monitoring and scanning, 'stop' to stop, or 'exit' to exit: ").strip().lower()
+        if command == "start":
+            if not monitor_thread.is_alive() and not scan_thread.is_alive():
+                stop_event.clear()
+                monitor_thread = threading.Thread(target=monitor_network, args=(interface, stop_event))
+                scan_thread = threading.Thread(target=scan_network, args=(network, stop_event))
+                monitor_thread.start()
+                scan_thread.start()
+                print("Monitoring and scanning started.")
+            else:
+                print("Monitoring and scanning are already running.")
+        elif command == "stop":
+            stop_event.set()
+            monitor_thread.join()
+            scan_thread.join()
+            print("Monitoring and scanning stopped.")   
+        elif command == "exit":
+            stop_event.set()
+            monitor_thread.join()
+            scan_thread.join()
+            print("Exiting program.")
+            break
+        else:
+            print("Invalid command. Please enter 'start', 'stop', or 'exit'.")        
 
-
-# CoPilot suggested this. Im gonna use something else but I want to keep it here for now to look at later
-        # Create stop event for threads
-        stop_event = threading.Event()
-
-        # Create and start monitoring thread
-        monitor_thread = threading.Thread(target=monitor_network, args=("eth0", stop_event))
-        monitor_thread.start()
-
-        # Create and start scanning thread
-        scan_thread = threading.Thread(target=scan_network, args=("192.168.1.0/24", stop_event))
-        scan_thread.start()
-
-        # Wait for user input to stop the threads
-        input("Press enter to stop monitoring and scanning...")
-
-        # Set the stop event to stop the threads
-        stop_event.set()
-
-        # Wait for the threads to finish
-        monitor_thread.join()
-        scan_thread.join()
-
-        print("Monitoring and scanning stopped.")
