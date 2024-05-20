@@ -5,16 +5,31 @@ import time
 import threading
 import signal
 import sys
+import threading
+import time
+from collections import deque
+
+global baseline
+
+# Global variables for storing network traffic data
+traffic_data = deque(maxlen=60) # Store data for 1 hour
+baseline = 0
 
 
 # 
 # Functioms for network scanning and monitoring
 # 
-
+# Signal handler function to stop the monitoring and scanning threads when a KeyboardInterrupt is received
 def signal_handler(signal, frame):
     stop_event.set()
     print("\nMonitoring and scanning stopped.")
     sys.exit(0)
+    
+# Alert function printed in the console in a different color
+#The \033[91m and \033[0m escape sequences are used to set and reset the text color in the terminal, respectively. 
+# In this case, the message will be displayed in red color.
+def display_alert(message):
+    print(f"\033[91m" + message + "\033[0m")
 
 # Network statistics
 def get_network_stats():
@@ -27,9 +42,6 @@ def get_network_stats():
     }
 
 # ARP scan function
-
-# 
-
 def arp_scan(network):
     arp = ARP(pdst=network)
     ether = Ether(dst="ff:ff:ff:ff:ff:ff")
@@ -44,13 +56,19 @@ def arp_scan(network):
     return devices
 
 #  Monitor and scanning functions w/ control
-
 def monitor_network(interface, stopEvent):
     while not stopEvent.is_set():
         try:
             stats = get_network_stats()
             print(f"Bytes sent: {stats['bytes_sent']}, Bytes received: {stats['bytes_recv']}")
             print(f"Packets sent: {stats['packets_sent']}, Packets received: {stats['packets_recv']}")
+            print(f"Average baseline (bytes received per second): {baseline}")
+            
+            if stats["bytes_recv"] > 1000000000:
+                alert_message = f"High network traffic detected on interface {interface}! Bytes received: {stats['bytes_recv']}"
+                display_alert(alert_message)
+                
+            
             time.sleep(5)
         except KeyboardInterrupt:
             stop_event.set()
@@ -69,43 +87,77 @@ def scan_network(network, stopEvent):
             stop_event.set()
             print("\nMonitoring and scanning stopped.")
             break
+        
+# baseline function to monitor the network traffic for a baseline
+def monitor_baseline(interface, stopEvent):
+    global baseline
+    while not stopEvent.is_set():
+        try:
+            stats = get_network_stats()
+            bytes_recv = stats['bytes_recv']
+            traffic_data.append(bytes_recv)
+                
+            time.sleep(1) # check every second
+        except KeyboardInterrupt:
+            stop_event.set()
+            print("\nMonitoring and scanning stopped.")
+            break
 
 
 if __name__ == "__main__":
     interface = "eth0"
     network = "192.168.1.0/24"
-    
     stop_event = threading.Event()
-    
     #Register signal handler for KeyboardInterrupt
     signal.signal(signal.SIGINT, signal_handler)
     # Start monitoring and scanning threads
     monitor_thread = threading.Thread(target=monitor_network, args=(interface, stop_event))
     scan_thread = threading.Thread(target=scan_network, args=(network, stop_event))
+    baseline_thread = threading.Thread(target=monitor_baseline, args=(interface, stop_event))
     
+    baseline_thread.start()
+    monitor_thread.start()
+    scan_thread.start()
+    
+    
+    # loops to control the monitoring and scanning processes
     while True:
-        command = input("Enter 'start' to start monitoring and scanning, 'stop' to stop, or 'exit' to exit: ").strip().lower()
-        if command == "start":
-            if not monitor_thread.is_alive() and not scan_thread.is_alive():
-                stop_event.clear()
-                monitor_thread = threading.Thread(target=monitor_network, args=(interface, stop_event))
-                scan_thread = threading.Thread(target=scan_network, args=(network, stop_event))
-                monitor_thread.start()
-                scan_thread.start()
-                print("Monitoring and scanning started.")
+        try:
+            command = input("Enter 'start' to start monitoring and scanning, 'stop' to stop, or 'exit' to exit: ").strip().lower()
+            if command == "start":
+                if not monitor_thread.is_alive() and not scan_thread.is_alive():
+                    stop_event.clear()
+                    monitor_thread = threading.Thread(target=monitor_network, args=(interface, stop_event))
+                    scan_thread = threading.Thread(target=scan_network, args=(network, stop_event))
+                    monitor_thread.start()
+                    scan_thread.start()
+                    print("Monitoring and scanning started.")
+                else:
+                    print("Monitoring and scanning are already running.")
+            elif command == "stop":
+                stop_event.set()
+                monitor_thread.join()
+                scan_thread.join()
+                print("Monitoring and scanning stopped.")   
+            elif command == "exit":
+                stop_event.set()
+                monitor_thread.join()
+                scan_thread.join()
+                print("Exiting program.")
+                break
             else:
-                print("Monitoring and scanning are already running.")
-        elif command == "stop":
+                print("Invalid command. Please enter 'start', 'stop', or 'exit'.")
+            
+            #calculate Baseline every minute
+            if len(traffic_data) == traffic_data.maxlen:
+                baseline = sum(traffic_data) // len(traffic_data) # calculate the average using only whole numbers
+                print(f"Baseline Network Traffic (Bytes received per second): {baseline}")     
+                
+        except KeyboardInterrupt:
             stop_event.set()
+            baseline_thread.join()
             monitor_thread.join()
             scan_thread.join()
-            print("Monitoring and scanning stopped.")   
-        elif command == "exit":
-            stop_event.set()
-            monitor_thread.join()
-            scan_thread.join()
-            print("Exiting program.")
-            break
-        else:
-            print("Invalid command. Please enter 'start', 'stop', or 'exit'.")        
+            print("\nExiting program.")
+            break   
 
