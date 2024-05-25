@@ -9,12 +9,9 @@ import threading
 import time
 from collections import deque
 
-global baseline
 
 # Global variables for storing network traffic data
-traffic_data = deque(maxlen=60) # Store data for 1 hour
-baseline = 0
-
+baseline = 0 # 1 MB/s
 
 # 
 # Functioms for network scanning and monitoring
@@ -57,15 +54,18 @@ def arp_scan(network):
 
 #  Monitor and scanning functions w/ control
 def monitor_network(interface, stopEvent):
+    global baseline
+    traffic_threshold = 500                     #5 times the baseline)
+    
     while not stopEvent.is_set():
         try:
             stats = get_network_stats()
             print(f"Bytes sent: {stats['bytes_sent']}, Bytes received: {stats['bytes_recv']}")
             print(f"Packets sent: {stats['packets_sent']}, Packets received: {stats['packets_recv']}")
-            print(f"Average baseline (bytes received per second): {baseline}")
+            print(f"Average baseline: {(baseline * 8) / 1000000:.2f} Mbps")
             
-            if stats["bytes_recv"] > 1000000000:
-                alert_message = f"High network traffic detected on interface {interface}! Bytes received: {stats['bytes_recv']}"
+            if baseline > 0 and stats["bytes_recv"] > baseline * traffic_threshold:
+                alert_message = f"High network traffic detected on interface {interface}! Traffic Rate: {(stats['bytes_recv'] * 8) / 1000000:.2f} Mbps, Threshold: {(baseline * traffic_threshold * 8 ) / 1000000:.2f} Mbps"
                 display_alert(alert_message)
                 
             
@@ -91,11 +91,18 @@ def scan_network(network, stopEvent):
 # baseline function to monitor the network traffic for a baseline
 def monitor_baseline(interface, stopEvent):
     global baseline
+    traffic_data = deque(maxlen=60) 
+    
     while not stopEvent.is_set():
         try:
             stats = get_network_stats()
             bytes_recv = stats['bytes_recv']
             traffic_data.append(bytes_recv)
+            
+            if len(traffic_data) == traffic_data.maxlen:
+                baseline = sum(traffic_data) // len(traffic_data) // 1000000
+                
+                
                 
             time.sleep(1) # check every second
         except KeyboardInterrupt:
@@ -147,11 +154,6 @@ if __name__ == "__main__":
                 break
             else:
                 print("Invalid command. Please enter 'start', 'stop', or 'exit'.")
-            
-            #calculate Baseline every minute
-            if len(traffic_data) == traffic_data.maxlen:
-                baseline = sum(traffic_data) // len(traffic_data) # calculate the average using only whole numbers
-                print(f"Baseline Network Traffic (Bytes received per second): {baseline}")     
                 
         except KeyboardInterrupt:
             stop_event.set()
