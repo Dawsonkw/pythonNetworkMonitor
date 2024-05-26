@@ -1,26 +1,40 @@
 import sys
 from collections import deque
-from scapy.all import ARP, Ether, srp, conf
 import time
 import threading
+import statistics
 import signal
 import psutil
 from tabulate import tabulate
+from scapy.all import ARP, Ether, srp, conf
 
 # Global variables for storing network traffic data
-baseline = 0  # 1 MB/s
+baseline = 16000000000
 
 # Functions for network scanning and monitoring
 
 
 def signal_handler(signal, frame):
+    """
+    Signal handler function to stop monitoring and scanning.
+
+    Args:
+        signal: The signal number.
+        frame: The current stack frame.
+    """
     stop_event.set()
     print("\nMonitoring and scanning stopped.")
     sys.exit(0)
 
 
 def display_alert(message):
-    print(f"\033[91m" + message + "\033[0m")
+    """
+    Display an alert message.
+
+    Args:
+        message (str): The alert message to display.
+    """
+    print("\033[91m" + message + "\033[0m")
 
 
 def get_network_stats():
@@ -56,7 +70,7 @@ def arp_scan(network):
 
 def monitor_network(interface, stop_event):
     global baseline
-    traffic_threshold = 500  # 5 times the baseline
+    traffic_threshold = 5  # 5 times the baseline
 
     while not stop_event.is_set():
         try:
@@ -72,7 +86,11 @@ def monitor_network(interface, stop_event):
                   "Metric", "Value"], tablefmt="pretty"))
 
             if baseline > 0 and stats["bytes_recv"] > baseline * traffic_threshold:
-                alert_message = f"High network traffic detected on interface {interface}! Traffic Rate: {(stats['bytes_recv'] * 8) / 1000000:.2f} Mbps, Threshold: {(baseline * traffic_threshold * 8) / 1000000:.2f} Mbps"
+                alert_message = (
+                    f"High network traffic detected on interface {interface}! "
+                    f"Traffic Rate: {(stats['bytes_recv'] * 8) / 1000000:.2f} Mbps, "
+                    f"Threshold: {(baseline * traffic_threshold * 8) / 1000000:.2f} Mbps"
+                )
                 display_alert(alert_message)
 
             time.sleep(5)
@@ -96,16 +114,20 @@ def scan_network(network, stop_event):
             break
 
 
-def monitor_baseline(interface, stop_event):
+def monitor_baseline(interface, stop_event, baseline_calculated_event):
     global baseline
-    traffic_data = deque(maxlen=60)
+    traffic_data = deque(maxlen=300)   # 1 hour of data
+
     while not stop_event.is_set():
         try:
             stats = get_network_stats()
             bytes_recv = stats['bytes_recv']
             traffic_data.append(bytes_recv)
             if len(traffic_data) == traffic_data.maxlen:
-                baseline = sum(traffic_data) // len(traffic_data) // 1000000
+                rolling_avg = sum(traffic_data) // len(traffic_data) // 1000000
+                # Exponential moving average
+                baseline = (baseline * 0.9) + (rolling_avg * 0.1)
+                baseline_calculated_event.set()
             time.sleep(1)  # check every second
         except KeyboardInterrupt:
             stop_event.set()
@@ -117,19 +139,34 @@ if __name__ == "__main__":
     INTERFACE = "eth0"
     NETWORK = "192.168.1.0/24"
     stop_event = threading.Event()
+    baseline_calculated_event = threading.Event()
 
     # Register signal handler for KeyboardInterrupt
     signal.signal(signal.SIGINT, signal_handler)
+
+    baseline_thread = threading.Thread(
+        target=monitor_baseline, args=(INTERFACE, stop_event, baseline_calculated_event))
+    baseline_thread.start()
+
+    print("Calculating baseline traffic rate...")
+    periods_printed = False
+    while not baseline_calculated_event.is_set():
+        print(".", end="", flush=True)
+        periods_printed = True
+        time.sleep(5)
+
+    if periods_printed:
+        print("\r", end="")
+    print(
+        f"Baseline traffic rate calculated: {(baseline * 8) / 1000000:.2f} Mbps")
+
+    time.sleep(10)
 
     # Start monitoring and scanning threads
     monitor_thread = threading.Thread(
         target=monitor_network, args=(INTERFACE, stop_event))
     scan_thread = threading.Thread(
         target=scan_network, args=(NETWORK, stop_event))
-    baseline_thread = threading.Thread(
-        target=monitor_baseline, args=(INTERFACE, stop_event))
-
-    baseline_thread.start()
     monitor_thread.start()
     scan_thread.start()
 
