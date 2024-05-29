@@ -2,14 +2,27 @@ import sys
 from collections import deque
 import time
 import threading
+import sqlite3
 import statistics
 import signal
 import psutil
 from tabulate import tabulate
-from scapy.all import ARP, Ether, srp, conf
 
 # Global variables for storing network traffic data
-baseline = 16000000000
+baseline = 50000000000
+
+"""
+Create and connect to a SQLite database to store network traffic data.
+"""
+#  Create a connection to the SQLite database / create new sqlite database
+conn = sqlite3.connect('network_monitor.db')
+
+c = conn.cursor()
+c.execute("DROP TABLE IF EXISTS network_traffic")
+c.execute('''CREATE TABLE IF NOT EXISTS network_traffic (timestamp TEXT, bytes_sent INTEGER, bytes_recv INTEGER, packets_sent INTEGER, packets_recv INTEGER, baseline INTEGER)''')
+conn.commit()
+conn.close()
+
 
 # Functions for network scanning and monitoring
 
@@ -69,12 +82,18 @@ def arp_scan(network):
 
 
 def monitor_network(interface, stop_event):
-    global baseline
-    traffic_threshold = 5  # 5 times the baseline
+    conn = sqlite3.connect('network_monitor.db')
+    c = conn.cursor()
 
+    global baseline
+    traffic_threshold = 10  # 5 times the baseline
     while not stop_event.is_set():
         try:
             stats = get_network_stats()
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            c.execute("INSERT INTO network_traffic VALUES (?, ?, ?, ?, ?, ?)", (timestamp,
+                      stats['bytes_sent'], stats['bytes_recv'], stats['packets_sent'], stats['packets_recv'], baseline))
+            conn.commit()
             table = [
                 ["Bytes Sent", convert_bytes(stats['bytes_sent'])],
                 ["Bytes Received", convert_bytes(stats['bytes_recv'])],
@@ -99,6 +118,8 @@ def monitor_network(interface, stop_event):
             print("\nMonitoring and scanning stopped.")
             break
 
+    conn.close()
+
 
 def scan_network(network, stop_event):
     while not stop_event.is_set():
@@ -115,8 +136,11 @@ def scan_network(network, stop_event):
 
 
 def monitor_baseline(interface, stop_event, baseline_calculated_event):
+    conn = sqlite3.connect('network_monitor.db')
+    c = conn.cursor()
+
     global baseline
-    traffic_data = deque(maxlen=300)   # 1 hour of data
+    traffic_data = deque(maxlen=10)   # 1 hour of data
 
     while not stop_event.is_set():
         try:
@@ -124,15 +148,31 @@ def monitor_baseline(interface, stop_event, baseline_calculated_event):
             bytes_recv = stats['bytes_recv']
             traffic_data.append(bytes_recv)
             if len(traffic_data) == traffic_data.maxlen:
-                rolling_avg = sum(traffic_data) // len(traffic_data) // 1000000
-                # Exponential moving average
-                baseline = (baseline * 0.9) + (rolling_avg * 0.1)
+                # Exponential moving average (old calculation method), leaving in in case I decide to switch back
+                # rolling_avg = sum(traffic_data) // len(traffic_data) // 1000000
+                # baseline = (baseline * 0.9) + (rolling_avg * 0.1)
+                baseline = statistics.quantiles(traffic_data, n=100)[95]
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                c.execute(
+                    "INSERT INTO network_traffic (timestamp, baseline) VALUES (?, ?)", (timestamp, baseline))
+                conn.commit()
                 baseline_calculated_event.set()
             time.sleep(1)  # check every second
         except KeyboardInterrupt:
             stop_event.set()
             print("\nMonitoring and scanning stopped.")
             break
+
+    conn.close()
+
+
+def get_all_traffic_data():
+    conn = sqlite3.connect('network_monitor.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM network_traffic")
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 
 if __name__ == "__main__":
@@ -192,6 +232,17 @@ if __name__ == "__main__":
                 monitor_thread.join()
                 scan_thread.join()
                 print("Monitoring and scanning stopped.")
+            elif command == "print":
+                traffic_data = get_all_traffic_data()
+                for row in traffic_data:
+                    timestamp, bytes_sent, bytes_recv, packets_sent, packets_recv, baseline = row
+                    print(f"Timestamp: {timestamp}")
+                    print(f"Bytes Sent: {bytes_sent}")
+                    print(f"Bytes Received: {bytes_recv}")
+                    print(f"Packets Sent: {packets_sent}")
+                    print(f"Packets Received: {packets_recv}")
+                    print(f"Baseline: {baseline}")
+                    print("-" * 20)
             elif command == "exit":
                 stop_event.set()
                 monitor_thread.join()
