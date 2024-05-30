@@ -1,0 +1,14 @@
+# .gitignore
+
+# Python
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.venv/
+backend/env/
+backend/*.env
+
+# Node
+frontend/node_modules/
+frontend/dist/

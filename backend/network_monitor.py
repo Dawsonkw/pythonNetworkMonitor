@@ -6,6 +6,7 @@ import sqlite3
 import statistics
 import signal
 import psutil
+from flask import FLASK, jsonify
 from tabulate import tabulate
 
 # Global variables for storing network traffic data
@@ -22,6 +23,11 @@ c.execute("DROP TABLE IF EXISTS network_traffic")
 c.execute('''CREATE TABLE IF NOT EXISTS network_traffic (timestamp TEXT, bytes_sent INTEGER, bytes_recv INTEGER, packets_sent INTEGER, packets_recv INTEGER, baseline INTEGER)''')
 conn.commit()
 conn.close()
+
+
+"""
+Create a Flask application to expose the network traffic data 
+"""
 
 
 # Functions for network scanning and monitoring
@@ -107,8 +113,10 @@ def monitor_network(interface, stop_event):
             if baseline > 0 and stats["bytes_recv"] > baseline * traffic_threshold:
                 alert_message = (
                     f"High network traffic detected on interface {interface}! "
-                    f"Traffic Rate: {(stats['bytes_recv'] * 8) / 1000000:.2f} Mbps, "
-                    f"Threshold: {(baseline * traffic_threshold * 8) / 1000000:.2f} Mbps"
+                    f"Traffic Rate: {
+                        (stats['bytes_recv'] * 8) / 1000000:.2f} Mbps, "
+                    f"Threshold: {
+                        (baseline * traffic_threshold * 8) / 1000000:.2f} Mbps"
                 )
                 display_alert(alert_message)
 
@@ -154,7 +162,7 @@ def monitor_baseline(interface, stop_event, baseline_calculated_event):
                 baseline = statistics.quantiles(traffic_data, n=100)[95]
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 c.execute(
-                    "INSERT INTO network_traffic (timestamp, baseline) VALUES (?, ?)", (timestamp, baseline))
+                    "INSERT INTO network_traffic (timestamp, baseline, bytes_sent, bytes_recv, packets_sent, packets_recv) VALUES (?, NULL, NULL, NULL, NULL, ?)", (timestamp, baseline))
                 conn.commit()
                 baseline_calculated_event.set()
             time.sleep(1)  # check every second
