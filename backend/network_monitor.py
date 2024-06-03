@@ -6,7 +6,7 @@ import sqlite3
 import statistics
 import signal
 import psutil
-from flask import FLASK, jsonify
+from flask import Flask, jsonify
 from tabulate import tabulate
 
 # Global variables for storing network traffic data
